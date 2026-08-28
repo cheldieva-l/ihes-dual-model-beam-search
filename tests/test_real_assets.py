@@ -53,6 +53,16 @@ def test_model_1763232740_when_configured() -> None:
     assert sum(parameter.numel() for parameter in model.parameters()) == 15_357_749
 
 
+def test_model_1780290207_when_configured() -> None:
+    model_root = os.environ.get("IHES_MODEL_178_ROOT")
+    if not model_root:
+        pytest.skip("model 1780290207 is not configured")
+    spec = resolve_model(model_root, "1780290207")
+    assert spec.model_id == "1780290207"
+    model = load_mlp2rb(spec, "cpu")
+    assert sum(parameter.numel() for parameter in model.parameters()) == 15_357_749
+
+
 def test_reverse_neighbour_block_when_configured() -> None:
     reverse_path = os.environ.get("IHES_REVERSE_NEIGHBOURS")
     if not reverse_path:
