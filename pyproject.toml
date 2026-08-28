@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ihes-dual-beam"
+version = "0.1.0"
+description = "Replay-verified MLP beam search for the CayleyPy IHES Cube"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "IHES dual-model beam search contributors"}]
+dependencies = ["numpy>=1.24", "pandas>=2.0", "torch>=2.1"]
+
+[project.scripts]
+ihes-beam = "ihes_dual.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ihes_dual*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
