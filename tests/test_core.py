@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import torch
 
 from ihes_dual.beam import BeamConfig, _keep_top_k, beam_search
 from ihes_dual.bidirectional import known_path_mapping_report
 from ihes_dual.puzzle import IHESPuzzle, invert_path
+from ihes_dual.registry import materialize_split_checkpoint, resolve_model
 from ihes_dual.symmetry import SymmetryFrame, map_reverse_frontier_to_direct
 
 
@@ -112,3 +115,24 @@ def test_top_k_is_exact_even_under_hash_collision() -> None:
     assert kept_scores.tolist() == [1.0, 2.0, 3.0]
     assert kept_parents.tolist() == [2, 1, 3]
     assert len({row.tobytes() for row in kept_states}) == 3
+
+
+def test_split_checkpoint_materialization(tmp_path: Path) -> None:
+    shards = []
+    for index, payload in enumerate((b"abc", b"def", b"ghi"), start=1):
+        shard = tmp_path / f"checkpoint_{index:02d}.txt"
+        shard.write_bytes(payload)
+        shards.append(shard)
+    output = materialize_split_checkpoint(shards, tmp_path / "model.pth")
+    assert output.read_bytes() == b"abcdefghi"
+
+
+def test_apple_archive_shards_are_not_raw_concatenated(tmp_path: Path) -> None:
+    (tmp_path / "model_p888-t000_1780290207.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "p888-t000_1780290207_e40960_01.txt").write_bytes(b"Aar!payload")
+    try:
+        resolve_model(tmp_path, "1780290207")
+    except RuntimeError as error:
+        assert "Apple Archive shards" in str(error)
+    else:
+        raise AssertionError("Apple Archive shards must not be concatenated as raw bytes")

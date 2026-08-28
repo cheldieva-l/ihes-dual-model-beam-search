@@ -27,11 +27,12 @@ tools/                     notebook generation and repository validation
 README.md                  overview and reproduction guide
 METHOD.md                  equations, invariants, and reconstruction details
 THIRD_PARTY_NOTICES.md     provenance and licensing boundaries
+SOURCE_AUDIT.md            inspected IHES sources and asset invariants
 ```
 
 ## Model identity
 
-Every run directory and log contains a canonical model identifier. The controlled run uses `1778521793`, resolving to `model_p888-t000_1778521793.json` and `p888-t000_1778521793_e32692.pth`. The registry also records the two Kaggle assets carrying model `1780290207` and the `ihes-e08192` Kaggle Model asset. Assets are referenced, not redistributed.
+Every run directory and log contains a canonical model identifier. The controlled run uses `1778521793`, resolving to `model_p888-t000_1778521793.json` and `p888-t000_1778521793_e32692.pth`. The registry also records the two Kaggle assets carrying model `1780290207` and resolves the `ihes-e08192` Kaggle Model alias to canonical model ID `1763232740`. The alternate `1780290207-ihes` asset is recognized as 11 Apple Archive shards; raw concatenation is explicitly rejected, and the direct epoch-40960 dataset is preferred for portable Kaggle runs. Assets are referenced, not redistributed.
 
 ## Local checks
 
@@ -58,4 +59,3 @@ Public version links will be inserted after the three GPU T4 runs have completed
 ## Results
 
 Results are recorded only after a completed remote run. No unexecuted notebook is presented as evidence of a solution, and no cross-puzzle path-retention guarantee is claimed.
-

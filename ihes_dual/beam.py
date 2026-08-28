@@ -161,7 +161,11 @@ def _keep_top_k(
     raw_limit = min(len(states), beam_width)
     while True:
         if raw_limit < len(states):
-            subset = np.argpartition(scores, raw_limit - 1)[:raw_limit]
+            threshold = np.partition(scores, raw_limit - 1)[raw_limit - 1]
+            # Include the complete boundary-score tie group. The final
+            # deterministic (score, hash1, hash2) ordering therefore does not
+            # depend on NumPy's arbitrary argpartition choices.
+            subset = np.flatnonzero(scores <= threshold)
         else:
             subset = np.arange(len(states), dtype=np.int64)
         subset_h1, subset_h2 = hasher(states[subset])

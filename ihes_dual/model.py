@@ -89,7 +89,7 @@ def load_mlp2rb(spec: ModelSpec, device: str | torch.device = "cuda") -> MLP2RB:
         hidden_2=int(config.get("hd2", config.get("hidden_2", 218))),
         residual_blocks=int(config.get("nrd", config.get("residual_blocks", 16))),
     )
-    payload = torch.load(spec.checkpoint, map_location="cpu", weights_only=False)
+    payload = torch.load(spec.checkpoint, map_location="cpu", weights_only=True)
     model.load_state_dict(_normalise_state_dict(payload), strict=True)
     model.eval().to(device)
     return model

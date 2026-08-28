@@ -21,4 +21,4 @@ runs/
 kaggle.json
 .env
 .env.*
-
+.ihes_model_cache/
