@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from ihes_dual.assets import find_competition_assets
 from ihes_dual.beam import BeamConfig, _keep_top_k, beam_search
 from ihes_dual.bidirectional import known_path_mapping_report
 from ihes_dual.puzzle import IHESPuzzle, invert_path
@@ -136,3 +137,19 @@ def test_apple_archive_shards_are_not_raw_concatenated(tmp_path: Path) -> None:
         assert "Apple Archive shards" in str(error)
     else:
         raise AssertionError("Apple Archive shards must not be concatenated as raw bytes")
+
+
+def test_competition_assets_ignore_auxiliary_puzzle_info(tmp_path: Path) -> None:
+    competition = tmp_path / "competition"
+    competition.mkdir()
+    for filename in ("puzzle_info.json", "test.csv", "sample_submission.csv"):
+        (competition / filename).write_text("", encoding="utf-8")
+    artifacts = tmp_path / "symmetry-artifacts"
+    artifacts.mkdir()
+    (artifacts / "puzzle_info.json").write_text("", encoding="utf-8")
+
+    assets = find_competition_assets(tmp_path)
+
+    assert assets.puzzle_info == competition / "puzzle_info.json"
+    assert assets.test_csv == competition / "test.csv"
+    assert assets.sample_submission == competition / "sample_submission.csv"
