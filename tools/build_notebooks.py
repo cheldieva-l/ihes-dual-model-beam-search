@@ -283,7 +283,7 @@ BIDIRECTIONAL = notebook(
             """
             # IHES Cube — Bidirectional Symmetry + Reverse Beam Search
 
-            This notebook builds independent direct and reverse beams with the paired-projection contrast objective, maps every reverse-frontier row into the direct projection, and performs a blind full-frontier intersection without a supplied midpoint or midpoint hash. The known cube-106 path is used only to audit true top-K retention and the optional, separate last-slot protection mode. Protected frontiers are never used for the blind join.
+            This notebook builds independent direct and reverse beams. The forward beam uses the controlled model's primary score, while the reverse beam uses the direction-aware `direct score - reverse score` paired-projection objective. It maps every reverse-frontier row into the direct projection and performs a blind full-frontier intersection without a supplied midpoint or midpoint hash. The known cube-106 path is used only to audit true top-K retention and the optional, separate last-slot protection mode. Protected frontiers are never used for the blind join.
             """
         ),
         code(
@@ -298,7 +298,7 @@ BIDIRECTIONAL = notebook(
             PARENT_CHUNK = 250_000
             INFERENCE_BATCH = 8_192
             DEVICE = "cuda"
-            PAIRED_CONTRAST = True
+            SCORING_MODE = "forward-primary_reverse-direct-minus-reverse"
             RUN_PROTECTED_DIAGNOSTIC = True
             KNOWN_PATH_106 = "-r2.-d2.-f2.r1.r1.d0.r2.-d0.-r0.-f0.d0.r0.f1.-d0.f1.r2.r1.-d0.-r2.-f1.-f2.d1.r0.d0"
             OUTPUT_DIR = Path("/kaggle/working") if Path("/kaggle/working").exists() else Path(".")
@@ -339,7 +339,7 @@ BIDIRECTIONAL = notebook(
             from ihes_dual.beam import BeamConfig, beam_search
             from ihes_dual.puzzle import invert_path
             from ihes_dual.solve import (
-                bidirectional_contrast_scorers,
+                bidirectional_scorers,
                 solve_bidirectional,
                 write_run_log,
             )
@@ -364,7 +364,7 @@ BIDIRECTIONAL = notebook(
                 forward_depths=FORWARD_DEPTHS,
                 reverse_depths=REVERSE_DEPTHS,
                 known_original_path=known_path,
-                paired_contrast=PAIRED_CONTRAST,
+                scoring_mode=SCORING_MODE,
             )
             ordinary_reports = {
                 "forward": blind.forward.diagnostic_report(),
@@ -389,12 +389,9 @@ BIDIRECTIONAL = notebook(
                 frame_known = frame.to_frame_path(known_path)
                 reverse_start = frame.reverse_start(start)
                 reverse_known = invert_path(frame_known, puzzle.inverse_move)
-                if PAIRED_CONTRAST:
-                    diagnostic_forward_scorer, diagnostic_reverse_scorer = (
-                        bidirectional_contrast_scorers(model, frame_start)
-                    )
-                else:
-                    diagnostic_forward_scorer = diagnostic_reverse_scorer = model
+                diagnostic_forward_scorer, diagnostic_reverse_scorer = (
+                    bidirectional_scorers(model, frame_start, SCORING_MODE)
+                )
                 diagnostic_forward = beam_search(
                     puzzle,
                     frame_start,
@@ -430,10 +427,7 @@ BIDIRECTIONAL = notebook(
                 "puzzle_id": PUZZLE_ID,
                 "symmetry_absolute_index": frame_index,
                 "blind_config": asdict(blind_config),
-                "scoring": (
-                    "primary_mlp_minus_same_mlp_in_exact_paired_projection"
-                    if PAIRED_CONTRAST else "primary_mlp"
-                ),
+                "scoring": SCORING_MODE,
                 "forward_depths": FORWARD_DEPTHS,
                 "reverse_depths": REVERSE_DEPTHS,
                 "mapped_reverse_frontier_rows": {

@@ -27,7 +27,7 @@ Run `notebooks/02_symmetry_reverse.ipynb`. Each enabled symmetry is algebraicall
 
 Run `notebooks/03_bidirectional_symmetry_reverse.ipynb`. Puzzle ID, model ID, beam width, symmetry, and retained forward/reverse depths are configuration values. For the controlled case, both directions use beam `1_000_000` and retain depths 12 through 16.
 
-The notebook first verifies the known 24-move path and the projection equation at all complementary path depths. The ordinary run evaluates every child in its primary and exact paired projection, minimizes the primary-minus-paired MLP score, keeps protection disabled, builds frontiers, and performs a blind full intersection. If the known audit trajectory drops from natural top-K, an optional separate diagnostic run enables last-slot protection and logs generation, natural retention, first drop, and protection. Protected frontiers are never used as blind-search evidence.
+The notebook first verifies the known 24-move path and the projection equation at all complementary path depths. The ordinary forward beam uses the validated primary MLP ranking; the reverse beam minimizes `mapped direct score - reverse score`. Both keep protection disabled, build complete retained frontiers, and perform a blind full intersection. If the known audit trajectory drops from natural top-K, an optional separate diagnostic run enables last-slot protection and logs generation, natural retention, first drop, and protection. Protected frontiers are never used as blind-search evidence.
 
 ## Required output checks
 

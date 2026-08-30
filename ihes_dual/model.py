@@ -132,8 +132,11 @@ class PairedContrastScorer:
         self,
         scorer: Callable[[torch.Tensor], torch.Tensor],
         paired_value_map: Sequence[int] | torch.Tensor,
+        *,
+        primary_minus_paired: bool = True,
     ) -> None:
         self.scorer = scorer
+        self.primary_minus_paired = bool(primary_minus_paired)
         value_map = torch.as_tensor(paired_value_map, dtype=torch.long)
         if value_map.ndim != 1 or not torch.equal(
             torch.sort(value_map).values, torch.arange(len(value_map), dtype=torch.long)
@@ -153,4 +156,6 @@ class PairedContrastScorer:
     def __call__(self, states: torch.Tensor) -> torch.Tensor:
         value_map = self._map_for(states.device)
         paired_states = value_map[states.long()]
-        return self.scorer(states) - self.scorer(paired_states)
+        primary = self.scorer(states)
+        paired = self.scorer(paired_states)
+        return primary - paired if self.primary_minus_paired else paired - primary

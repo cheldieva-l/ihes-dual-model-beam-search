@@ -11,6 +11,7 @@ from ihes_dual.bidirectional import blind_join, known_path_mapping_report
 from ihes_dual.model import PairedContrastScorer
 from ihes_dual.puzzle import IHESPuzzle, invert_path
 from ihes_dual.registry import materialize_split_checkpoint, resolve_model
+from ihes_dual.solve import bidirectional_scorers
 from ihes_dual.symmetry import SymmetryFrame, map_reverse_frontier_to_direct
 
 
@@ -56,6 +57,32 @@ def test_paired_contrast_scorer_uses_exact_value_map() -> None:
     scorer = PairedContrastScorer(positional_score, value_map)
     expected = positional_score(states) - positional_score(value_map[states.long()])
     assert torch.equal(scorer(states), expected)
+    opposite = PairedContrastScorer(
+        positional_score, value_map, primary_minus_paired=False
+    )
+    assert torch.equal(opposite(states), -expected)
+
+
+def test_direction_aware_direct_minus_reverse_scoring() -> None:
+    def positional_score(states: torch.Tensor) -> torch.Tensor:
+        weights = torch.arange(1, states.shape[1] + 1, device=states.device)
+        return (states.float() * weights).sum(dim=1)
+
+    direct_start = np.asarray([2, 0, 1], dtype=np.uint8)
+    forward, reverse = bidirectional_scorers(
+        positional_score, direct_start, "direct-minus-reverse"
+    )
+    states = torch.tensor([[0, 1, 2], [2, 0, 1]], dtype=torch.uint8)
+    inverse_start = torch.tensor(np.argsort(direct_start), dtype=torch.long)
+    start_map = torch.tensor(direct_start, dtype=torch.long)
+    assert torch.equal(
+        forward(states),
+        positional_score(states) - positional_score(inverse_start[states.long()]),
+    )
+    assert torch.equal(
+        reverse(states),
+        positional_score(start_map[states.long()]) - positional_score(states),
+    )
 
 
 def test_blind_join_intersects_exact_mapped_frontiers() -> None:

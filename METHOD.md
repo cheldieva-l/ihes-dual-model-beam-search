@@ -29,12 +29,15 @@ method. For a direct-frame state `d`, the inverse projection is:
 N_s(d)[q] = inverse(s)[d[q]]
 ```
 
-The direct beam minimizes `h(d) - h(N_s(d))`. For a reverse-frame state `r`, the
-reverse beam symmetrically minimizes `h(r) - h(M_s(r))`. Thus each child is scored
-by the configured checkpoint both in its primary coordinates and in the exact
-paired coordinates. The controlled run intentionally uses the same canonical MLP
-model ID `1778521793` for both evaluations; it does not claim that two distinct
-weight files were used.
+The source direction-aware contrast is `direct score - reverse score`. It therefore
+has different call order in the two searches: `h(d) - h(N_s(d))` for a direct
+candidate and `h(M_s(r)) - h(r)` for a reverse candidate. The controlled cube-106
+run uses the already validated primary MLP ranking in the forward beam and the
+direction-aware contrast in the reverse beam. This explicit hybrid preserves the
+forward behavior that produced the replay-verified 24-move base solution while
+giving the reverse search the paired orientation from the source method. The same
+canonical checkpoint `1778521793` performs every evaluation; this does not claim
+that two distinct weight files were used.
 
 ## 3. Symmetry frame
 
