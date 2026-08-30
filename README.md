@@ -57,7 +57,7 @@ python -m pytest tests/test_real_assets.py
 
 1. [IHES Base MLP Beam Search 1M](https://www.kaggle.com/code/arabidopsisthalian/ihes-base-mlp-beam-search-1m) — public version 1 completed on GPU T4 x2.
 2. [IHES Symmetry Reverse Beam Search](https://www.kaggle.com/code/arabidopsisthalian/ihes-symmetry-reverse-beam-search) — public version 1 completed on GPU T4 x2.
-3. [IHES Bidirectional Symmetry Reverse](https://www.kaggle.com/code/arabidopsisthalian/ihes-bidirectional-symmetry-reverse) — public version 1 ended without a blind meeting; a corrected paired-contrast version is pending rerun.
+3. [IHES Bidirectional Symmetry Reverse](https://www.kaggle.com/code/arabidopsisthalian/ihes-bidirectional-symmetry-reverse) — public version 1 ended without a blind meeting; paired-contrast public version 2 is running on GPU T4.
 
 See [REPRODUCE.md](REPRODUCE.md) for required inputs and validation steps.
 
@@ -69,6 +69,6 @@ The completed remote outputs were inspected on 2026-08-28. Both finished runs us
 |---|---:|---:|---|---:|---|---|
 | Base MLP | 39m 42s | n/a | direct | 24 | passed | present; 1,003 rows validated |
 | Symmetry + reverse | 2h 41m 1s | 48 | direct, identity frame | 24 | passed | present; 1,003 rows validated |
-| Bidirectional symmetry + reverse | v1: 48m 20s, error | identity | no exact meeting with primary-only ranking | n/a | n/a | absent |
+| Bidirectional symmetry + reverse | v1: 48m 20s, error; v2 running | identity | v1: no exact meeting with primary-only ranking | pending | pending | pending |
 
 The two completed runs found the same 24-move path. The symmetry/reverse run therefore verifies the transformation and replay pipeline but does not improve the controlled case. Bidirectional version 1 correctly rejected an empty blind intersection instead of manufacturing a protected result; its primary-only ranking also exposed the missing paired-contrast objective from the source method. Results are recorded only after a completed remote run. No unexecuted notebook is presented as evidence of a solution, and no cross-puzzle path-retention guarantee is claimed.
