@@ -12,7 +12,7 @@ Repository: <https://github.com/cheldieva-l/tetraminx-cpp-dual-model-beam-search
 
 Method description: <https://github.com/cheldieva-l/tetraminx-cpp-dual-model-beam-search/blob/main/METHOD.md>
 
-The inspected revision was `7d107f50d847fc022646525dd454dcedb1fc0147`. No license file was present in that checkout, so no source code was copied. The reverse-projection equation, blind-meeting requirement, path-protection diagnostic, and replay requirements were independently implemented from the published mathematical description.
+The inspected revision was `7d107f50d847fc022646525dd454dcedb1fc0147`. No license file was present in that checkout, so no source code was copied. The reverse-projection equation, paired primary-minus-opposite scoring objective, blind-meeting requirement, path-protection diagnostic, and replay requirements were independently implemented from the published mathematical description.
 
 ## Artgor IHES TPU beam notebook
 
@@ -23,4 +23,3 @@ The IHES rotation convention, generator conjugation equation, and reverse-path c
 ## Kaggle assets
 
 The competition data, the four referenced IHES model assets, the API JSON dataset, model checkpoints, symmetry arrays, and participant submissions remain under their respective Kaggle terms. They are referenced and loaded at runtime but are not included in this repository.
-

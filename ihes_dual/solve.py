@@ -10,7 +10,8 @@ import torch
 
 from .beam import BeamConfig, BeamTrace, beam_search
 from .bidirectional import JoinedSolution, blind_join, known_path_mapping_report
-from .puzzle import IHESPuzzle, invert_path
+from .model import PairedContrastScorer
+from .puzzle import IHESPuzzle, invert_path, invert_permutation
 from .symmetry import SymmetryFrame
 
 
@@ -93,6 +94,17 @@ class BidirectionalRun:
     mapping_report: list[dict[str, object]] | None
 
 
+def bidirectional_contrast_scorers(
+    scorer: Callable[[torch.Tensor], torch.Tensor],
+    direct_start: Sequence[int] | np.ndarray,
+) -> tuple[PairedContrastScorer, PairedContrastScorer]:
+    """Build paired primary-minus-opposite scorers for both search directions."""
+
+    direct = np.asarray(direct_start, dtype=np.uint8)
+    reverse = invert_permutation(direct).astype(np.uint8)
+    return PairedContrastScorer(scorer, reverse), PairedContrastScorer(scorer, direct)
+
+
 def solve_bidirectional(
     puzzle: IHESPuzzle,
     original_start: Sequence[int] | np.ndarray,
@@ -103,6 +115,7 @@ def solve_bidirectional(
     forward_depths: Sequence[int],
     reverse_depths: Sequence[int],
     known_original_path: Sequence[int] | None = None,
+    paired_contrast: bool = False,
 ) -> BidirectionalRun:
     frame_start = frame.rotate_state(original_start)
     reverse_start = frame.reverse_start(original_start)
@@ -110,10 +123,14 @@ def solve_bidirectional(
     reverse_known = None if frame_known is None else invert_path(frame_known, puzzle.inverse_move)
     maximum_depth = max(max(forward_depths), max(reverse_depths))
     run_config = BeamConfig(**{**asdict(config), "max_depth": maximum_depth})
+    if paired_contrast:
+        forward_scorer, reverse_scorer = bidirectional_contrast_scorers(scorer, frame_start)
+    else:
+        forward_scorer = reverse_scorer = scorer
     forward = beam_search(
         puzzle,
         frame_start,
-        scorer,
+        forward_scorer,
         run_config,
         retain_depths=forward_depths,
         diagnostic_path=frame_known,
@@ -121,7 +138,7 @@ def solve_bidirectional(
     reverse = beam_search(
         puzzle,
         reverse_start,
-        scorer,
+        reverse_scorer,
         run_config,
         retain_depths=reverse_depths,
         diagnostic_path=reverse_known,

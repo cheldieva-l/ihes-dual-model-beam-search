@@ -30,6 +30,13 @@ The inspected `test (3).py.txt` contained an artificial generator exclusion mech
 
 The inspected trainer and model configuration establish the checkpoint-compatible `MLP2RB` layout. Model `1778521793` has two dense widths `2556` and `218`, 16 residual blocks, and 15,357,749 parameters. The controlled checkpoint is epoch 32692. Model `1780290207` uses the same registered architecture, with the requested epoch-40960 checkpoint.
 
+The audited Tetraminx method revision `7d107f50d847fc022646525dd454dcedb1fc0147`
+also ranks bidirectional candidates by a primary-minus-paired projection score.
+The IHES implementation independently applies that mathematical objective with the
+single canonical MLP checkpoint selected by the run: a candidate and its exact
+paired-coordinate image are evaluated by the same model. No Tetraminx native source
+or weights are copied.
+
 ## Checkpoint fingerprints
 
 Fingerprints are recorded for identity and audit; weight files are not committed.

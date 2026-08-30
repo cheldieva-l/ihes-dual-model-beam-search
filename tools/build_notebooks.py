@@ -283,7 +283,7 @@ BIDIRECTIONAL = notebook(
             """
             # IHES Cube — Bidirectional Symmetry + Reverse Beam Search
 
-            This notebook builds independent direct and reverse beams, maps every reverse-frontier row into the direct projection, and performs a blind full-frontier intersection without a supplied midpoint or midpoint hash. The known cube-106 path is used only to audit true top-K retention and the optional, separate last-slot protection mode. Protected frontiers are never used for the blind join.
+            This notebook builds independent direct and reverse beams with the paired-projection contrast objective, maps every reverse-frontier row into the direct projection, and performs a blind full-frontier intersection without a supplied midpoint or midpoint hash. The known cube-106 path is used only to audit true top-K retention and the optional, separate last-slot protection mode. Protected frontiers are never used for the blind join.
             """
         ),
         code(
@@ -298,6 +298,7 @@ BIDIRECTIONAL = notebook(
             PARENT_CHUNK = 250_000
             INFERENCE_BATCH = 8_192
             DEVICE = "cuda"
+            PAIRED_CONTRAST = True
             RUN_PROTECTED_DIAGNOSTIC = True
             KNOWN_PATH_106 = "-r2.-d2.-f2.r1.r1.d0.r2.-d0.-r0.-f0.d0.r0.f1.-d0.f1.r2.r1.-d0.-r2.-f1.-f2.d1.r0.d0"
             OUTPUT_DIR = Path("/kaggle/working") if Path("/kaggle/working").exists() else Path(".")
@@ -337,7 +338,11 @@ BIDIRECTIONAL = notebook(
             from dataclasses import asdict
             from ihes_dual.beam import BeamConfig, beam_search
             from ihes_dual.puzzle import invert_path
-            from ihes_dual.solve import solve_bidirectional, write_run_log
+            from ihes_dual.solve import (
+                bidirectional_contrast_scorers,
+                solve_bidirectional,
+                write_run_log,
+            )
             from ihes_dual.submission import build_submission, validate_submission
 
             blind_config = BeamConfig(
@@ -359,30 +364,50 @@ BIDIRECTIONAL = notebook(
                 forward_depths=FORWARD_DEPTHS,
                 reverse_depths=REVERSE_DEPTHS,
                 known_original_path=known_path,
+                paired_contrast=PAIRED_CONTRAST,
             )
-            if blind.joined is None:
-                raise RuntimeError("blind complete-frontier intersection found no exact meeting")
-            if not puzzle.verify_solution(start, blind.joined.original_path):
-                raise AssertionError("blind joined path failed original-coordinate replay")
-            print("blind meeting:", blind.joined.meeting)
-            print("blind solution length:", len(blind.joined.original_path))
-            print("blind solution:", puzzle.encode_path(blind.joined.original_path))
+            ordinary_reports = {
+                "forward": blind.forward.diagnostic_report(),
+                "reverse": blind.reverse.diagnostic_report(),
+            }
+            for direction, report in ordinary_reports.items():
+                print(direction, "ordinary first natural drop:", report["first_natural_drop"])
+                for row in report["depths"]:
+                    print(direction, "ordinary", row)
+            print("blind exact meeting found:", blind.joined is not None)
             """
         ),
         code(
             """
             protected_report = None
-            if RUN_PROTECTED_DIAGNOSTIC and known_path is not None:
+            needs_protected_run = any(
+                report["first_natural_drop"] is not None for report in ordinary_reports.values()
+            )
+            if RUN_PROTECTED_DIAGNOSTIC and known_path is not None and needs_protected_run:
                 protected_config = BeamConfig(**{**asdict(blind_config), "diagnostic_protect": True})
                 frame_start = frame.rotate_state(start)
                 frame_known = frame.to_frame_path(known_path)
                 reverse_start = frame.reverse_start(start)
                 reverse_known = invert_path(frame_known, puzzle.inverse_move)
+                if PAIRED_CONTRAST:
+                    diagnostic_forward_scorer, diagnostic_reverse_scorer = (
+                        bidirectional_contrast_scorers(model, frame_start)
+                    )
+                else:
+                    diagnostic_forward_scorer = diagnostic_reverse_scorer = model
                 diagnostic_forward = beam_search(
-                    puzzle, frame_start, model, protected_config, diagnostic_path=frame_known
+                    puzzle,
+                    frame_start,
+                    diagnostic_forward_scorer,
+                    protected_config,
+                    diagnostic_path=frame_known,
                 )
                 diagnostic_reverse = beam_search(
-                    puzzle, reverse_start, model, protected_config, diagnostic_path=reverse_known
+                    puzzle,
+                    reverse_start,
+                    diagnostic_reverse_scorer,
+                    protected_config,
+                    diagnostic_path=reverse_known,
                 )
                 protected_report = {
                     "forward": diagnostic_forward.diagnostic_report(),
@@ -393,38 +418,72 @@ BIDIRECTIONAL = notebook(
                     for row in report["depths"]:
                         print(direction, row)
                         assert not row["known_state_protected"] or row["known_state_generated"]
+            elif RUN_PROTECTED_DIAGNOSTIC and known_path is not None:
+                protected_report = {
+                    "skipped": "ordinary true top-K retained every audited path point"
+                }
+
+            run_dir = OUTPUT_DIR / "runs" / f"model-{MODEL_ID}" / f"puzzle-{PUZZLE_ID}" / "bidirectional"
+            run_payload = {
+                "mode": "bidirectional-symmetry-reverse",
+                "model_id": MODEL_ID,
+                "puzzle_id": PUZZLE_ID,
+                "symmetry_absolute_index": frame_index,
+                "blind_config": asdict(blind_config),
+                "scoring": (
+                    "primary_mlp_minus_same_mlp_in_exact_paired_projection"
+                    if PAIRED_CONTRAST else "primary_mlp"
+                ),
+                "forward_depths": FORWARD_DEPTHS,
+                "reverse_depths": REVERSE_DEPTHS,
+                "mapped_reverse_frontier_rows": {
+                    str(depth): len(blind.reverse.frontiers[depth].states)
+                    for depth in REVERSE_DEPTHS
+                },
+                "reverse_mapping_formula": "mapped[q] = direct_start[reverse_state[q]]",
+                "mapping_applied_before_hashing": True,
+                "blind_intersector_used_known_midpoint_or_hash": False,
+                "protected_frontiers_used_for_blind_join": False,
+                "meeting": None if blind.joined is None else asdict(blind.joined.meeting),
+                "solution": (
+                    None if blind.joined is None
+                    else puzzle.encode_path(blind.joined.original_path)
+                ),
+                "solution_length": (
+                    None if blind.joined is None else len(blind.joined.original_path)
+                ),
+                "replay_valid": (
+                    False if blind.joined is None
+                    else puzzle.verify_solution(start, blind.joined.original_path)
+                ),
+                "known_path_mapping": blind.mapping_report,
+                "ordinary_forward_diagnostic": ordinary_reports["forward"],
+                "ordinary_reverse_diagnostic": ordinary_reports["reverse"],
+                "protected_diagnostic": protected_report,
+            }
+            write_run_log(run_dir / "run.json", run_payload)
+            if blind.joined is None:
+                raise RuntimeError("blind complete-frontier intersection found no exact meeting")
+            if not run_payload["replay_valid"]:
+                raise AssertionError("blind joined path failed original-coordinate replay")
+            print("blind meeting:", blind.joined.meeting)
+            print("blind solution length:", len(blind.joined.original_path))
+            print("blind solution:", puzzle.encode_path(blind.joined.original_path))
             """
         ),
         code(
             """
-            run_dir = OUTPUT_DIR / "runs" / f"model-{MODEL_ID}" / f"puzzle-{PUZZLE_ID}" / "bidirectional"
-            write_run_log(
-                run_dir / "run.json",
-                {
-                    "mode": "bidirectional-symmetry-reverse",
-                    "model_id": MODEL_ID,
-                    "puzzle_id": PUZZLE_ID,
-                    "symmetry_absolute_index": frame_index,
-                    "blind_config": asdict(blind_config),
-                    "forward_depths": FORWARD_DEPTHS,
-                    "reverse_depths": REVERSE_DEPTHS,
-                    "meeting": asdict(blind.joined.meeting),
-                    "solution": puzzle.encode_path(blind.joined.original_path),
-                    "solution_length": len(blind.joined.original_path),
-                    "replay_valid": True,
-                    "known_path_mapping": blind.mapping_report,
-                    "ordinary_forward_diagnostic": blind.forward.diagnostic_report(),
-                    "ordinary_reverse_diagnostic": blind.reverse.diagnostic_report(),
-                    "protected_diagnostic": protected_report,
-                },
-            )
             submission_path = build_submission(
                 assets.sample_submission,
                 OUTPUT_DIR / "submission.csv",
                 puzzle,
                 {PUZZLE_ID: blind.joined.original_path},
             )
-            print("validation:", validate_submission(submission_path, assets.test_csv, puzzle))
+            submission_validation = validate_submission(submission_path, assets.test_csv, puzzle)
+            run_payload["submission_validation"] = submission_validation
+            write_run_log(run_dir / "run.json", run_payload)
+            print("submission:", submission_path)
+            print("validation:", submission_validation)
             """
         ),
     ]

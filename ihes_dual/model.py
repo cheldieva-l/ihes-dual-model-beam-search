@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable, Sequence
 
 import torch
 from torch import nn
@@ -116,3 +116,41 @@ class EnsembleScorer:
             score = contribution if score is None else score + contribution
         assert score is not None
         return score
+
+
+class PairedContrastScorer:
+    """Rank a state by its primary score minus its paired-projection score.
+
+    The value map is a permutation of state labels.  It therefore maps a full
+    tensor batch without leaving the GPU and without changing the checkpoint's
+    feature ordering.  The same underlying MLP is evaluated in both exact
+    projections; this is the IHES adaptation of the dual-model contrast
+    objective used by the source method.
+    """
+
+    def __init__(
+        self,
+        scorer: Callable[[torch.Tensor], torch.Tensor],
+        paired_value_map: Sequence[int] | torch.Tensor,
+    ) -> None:
+        self.scorer = scorer
+        value_map = torch.as_tensor(paired_value_map, dtype=torch.long)
+        if value_map.ndim != 1 or not torch.equal(
+            torch.sort(value_map).values, torch.arange(len(value_map), dtype=torch.long)
+        ):
+            raise ValueError("paired value map must be a one-dimensional permutation")
+        self._value_map = value_map
+        self._device_maps: dict[torch.device, torch.Tensor] = {}
+
+    def _map_for(self, device: torch.device) -> torch.Tensor:
+        mapped = self._device_maps.get(device)
+        if mapped is None:
+            mapped = self._value_map.to(device)
+            self._device_maps[device] = mapped
+        return mapped
+
+    @torch.inference_mode()
+    def __call__(self, states: torch.Tensor) -> torch.Tensor:
+        value_map = self._map_for(states.device)
+        paired_states = value_map[states.long()]
+        return self.scorer(states) - self.scorer(paired_states)

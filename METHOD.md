@@ -21,6 +21,21 @@ The checkpoint-compatible network one-hot encodes all 72 state entries, uses two
 
 Two deterministic 64-bit Zobrist hashes index states. Hash equality is never treated as state equality in correctness-sensitive operations: collision groups and frontier meetings are verified by exact comparison of all 72 entries.
 
+The first two notebooks rank by the primary MLP score. The bidirectional notebook
+uses the paired-projection contrast objective adapted from the source dual-model
+method. For a direct-frame state `d`, the inverse projection is:
+
+```text
+N_s(d)[q] = inverse(s)[d[q]]
+```
+
+The direct beam minimizes `h(d) - h(N_s(d))`. For a reverse-frame state `r`, the
+reverse beam symmetrically minimizes `h(r) - h(M_s(r))`. Thus each child is scored
+by the configured checkpoint both in its primary coordinates and in the exact
+paired coordinates. The controlled run intentionally uses the same canonical MLP
+model ID `1778521793` for both evaluations; it does not claim that two distinct
+weight files were used.
+
 ## 3. Symmetry frame
 
 For a relabelling permutation `R`, let `R_inv = argsort(R)`. A state is represented in the rotated frame as:
@@ -82,4 +97,3 @@ These observations establish a checkable invariant for one run. They do not prov
 ## 7. Submission invariant
 
 A replacement is written into the official two-column sample file. The validator then parses and replays every path for all 1,003 test states. It rejects missing IDs, duplicate IDs, extra columns, unknown generators, incorrect terminal states, or an invalid replacement.
-

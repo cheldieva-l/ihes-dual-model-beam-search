@@ -6,8 +6,9 @@ import numpy as np
 import torch
 
 from ihes_dual.assets import find_competition_assets
-from ihes_dual.beam import BeamConfig, _keep_top_k, beam_search
-from ihes_dual.bidirectional import known_path_mapping_report
+from ihes_dual.beam import BeamConfig, BeamTrace, StoredFrontier, _keep_top_k, beam_search
+from ihes_dual.bidirectional import blind_join, known_path_mapping_report
+from ihes_dual.model import PairedContrastScorer
 from ihes_dual.puzzle import IHESPuzzle, invert_path
 from ihes_dual.registry import materialize_split_checkpoint, resolve_model
 from ihes_dual.symmetry import SymmetryFrame, map_reverse_frontier_to_direct
@@ -43,6 +44,59 @@ def test_invert_path_and_mapping() -> None:
     assert all(row["exact_mapping"] for row in report)
     reverse = np.argsort(start)
     assert np.array_equal(map_reverse_frontier_to_direct(reverse, start), puzzle.solved)
+
+
+def test_paired_contrast_scorer_uses_exact_value_map() -> None:
+    def positional_score(states: torch.Tensor) -> torch.Tensor:
+        weights = torch.arange(1, states.shape[1] + 1, device=states.device)
+        return (states.float() * weights).sum(dim=1)
+
+    states = torch.tensor([[0, 1, 2], [2, 0, 1]], dtype=torch.uint8)
+    value_map = torch.tensor([2, 0, 1])
+    scorer = PairedContrastScorer(positional_score, value_map)
+    expected = positional_score(states) - positional_score(value_map[states.long()])
+    assert torch.equal(scorer(states), expected)
+
+
+def test_blind_join_intersects_exact_mapped_frontiers() -> None:
+    puzzle = tiny_puzzle()
+    start = np.asarray([2, 1, 0], dtype=np.uint8)
+    frame = SymmetryFrame.identity(puzzle)
+    forward_state = puzzle.apply(start, 0).astype(np.uint8)
+    reverse_start = np.argsort(start).astype(np.uint8)
+    reverse_state = puzzle.apply(puzzle.apply(reverse_start, 1), 3).astype(np.uint8)
+    assert np.array_equal(forward_state, map_reverse_frontier_to_direct(reverse_state, start))
+
+    config = BeamConfig(beam_width=1, max_depth=1, device="cpu", autocast=False)
+    forward = BeamTrace(
+        start=start,
+        config=config,
+        parent_history=[np.asarray([0], dtype=np.int32)],
+        move_history=[np.asarray([0], dtype=np.int16)],
+        frontiers={
+            1: StoredFrontier(
+                forward_state[None, :], np.asarray([1.0], dtype=np.float32),
+                np.asarray([0], dtype=np.int16),
+            )
+        },
+    )
+    reverse = BeamTrace(
+        start=reverse_start,
+        config=config,
+        parent_history=[np.asarray([0], dtype=np.int32), np.asarray([0], dtype=np.int32)],
+        move_history=[np.asarray([1], dtype=np.int16), np.asarray([3], dtype=np.int16)],
+        frontiers={
+            2: StoredFrontier(
+                reverse_state[None, :], np.asarray([2.0], dtype=np.float32),
+                np.asarray([3], dtype=np.int16),
+            )
+        },
+    )
+    joined = blind_join(
+        puzzle, start, frame, forward, reverse, forward_depths=(1,), reverse_depths=(2,)
+    )
+    assert joined is not None
+    assert puzzle.verify_solution(start, joined.original_path)
 
 
 def test_beam_expands_every_generator_and_replays() -> None:
