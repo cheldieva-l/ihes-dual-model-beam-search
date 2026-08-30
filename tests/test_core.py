@@ -7,7 +7,7 @@ import torch
 
 from ihes_dual.assets import find_competition_assets
 from ihes_dual.beam import BeamConfig, BeamTrace, StoredFrontier, _keep_top_k, beam_search
-from ihes_dual.bidirectional import blind_join, known_path_mapping_report
+from ihes_dual.bidirectional import blind_join, blind_join_one_move, known_path_mapping_report
 from ihes_dual.model import PairedContrastScorer
 from ihes_dual.puzzle import IHESPuzzle, invert_path
 from ihes_dual.registry import materialize_split_checkpoint, resolve_model
@@ -123,6 +123,61 @@ def test_blind_join_intersects_exact_mapped_frontiers() -> None:
         puzzle, start, frame, forward, reverse, forward_depths=(1,), reverse_depths=(2,)
     )
     assert joined is not None
+    assert puzzle.verify_solution(start, joined.original_path)
+
+
+def test_blind_one_move_shell_join_replays() -> None:
+    puzzle = tiny_puzzle()
+    start = np.asarray([2, 1, 0], dtype=np.uint8)
+    frame = SymmetryFrame.identity(puzzle)
+    forward_state = puzzle.apply(start, 0).astype(np.uint8)
+    reverse_start = np.argsort(start).astype(np.uint8)
+    reverse_state = puzzle.apply(reverse_start, 1).astype(np.uint8)
+    assert not np.array_equal(
+        forward_state, map_reverse_frontier_to_direct(reverse_state, start)
+    )
+
+    config = BeamConfig(beam_width=1, max_depth=1, device="cpu", autocast=False)
+    forward = BeamTrace(
+        start=start,
+        config=config,
+        parent_history=[np.asarray([0], dtype=np.int32)],
+        move_history=[np.asarray([0], dtype=np.int16)],
+        frontiers={
+            1: StoredFrontier(
+                forward_state[None, :], np.asarray([1.0], dtype=np.float32),
+                np.asarray([0], dtype=np.int16),
+            )
+        },
+    )
+    reverse = BeamTrace(
+        start=reverse_start,
+        config=config,
+        parent_history=[np.asarray([0], dtype=np.int32)],
+        move_history=[np.asarray([1], dtype=np.int16)],
+        frontiers={
+            1: StoredFrontier(
+                reverse_state[None, :], np.asarray([2.0], dtype=np.float32),
+                np.asarray([1], dtype=np.int16),
+            )
+        },
+    )
+    joined = blind_join_one_move(
+        puzzle,
+        start,
+        frame,
+        forward,
+        reverse,
+        forward_depths=(1,),
+        reverse_depths=(1,),
+        parent_chunk=1,
+    )
+    assert joined is not None
+    assert joined.meeting.join_kind in {
+        "forward-one-move-shell",
+        "reverse-one-move-shell",
+    }
+    assert len(joined.original_path) == 3
     assert puzzle.verify_solution(start, joined.original_path)
 
 

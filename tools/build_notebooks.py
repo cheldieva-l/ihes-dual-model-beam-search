@@ -283,7 +283,7 @@ BIDIRECTIONAL = notebook(
             """
             # IHES Cube — Bidirectional Symmetry + Reverse Beam Search
 
-            This notebook builds independent direct and reverse beams. The forward beam uses the controlled model's primary score, while the reverse beam uses the direction-aware `direct score - reverse score` paired-projection objective. It maps every reverse-frontier row into the direct projection and performs a blind full-frontier intersection without a supplied midpoint or midpoint hash. The known cube-106 path is used only to audit true top-K retention and the optional, separate last-slot protection mode. Protected frontiers are never used for the blind join.
+            This notebook builds independent direct and reverse beams. The forward beam uses the controlled model's primary score, while the reverse beam uses the direction-aware `direct score - reverse score` paired-projection objective. It first maps every reverse-frontier row into the direct projection and performs the required blind exact full-frontier intersection without a supplied midpoint or midpoint hash. If that exact set intersection is empty, an explicitly labelled blind extension scans every one-move child shell against the opposite complete frontier. Shell children are generated candidates, not claimed top-K states. The known cube-106 path is used only to audit true top-K retention and the optional, separate last-slot protection mode. Protected frontiers are never used for either blind join.
             """
         ),
         code(
@@ -299,6 +299,8 @@ BIDIRECTIONAL = notebook(
             INFERENCE_BATCH = 8_192
             DEVICE = "cuda"
             SCORING_MODE = "forward-primary_reverse-direct-minus-reverse"
+            ALLOW_ONE_MOVE_SHELL = True
+            SHELL_PARENT_CHUNK = 10_000
             RUN_PROTECTED_DIAGNOSTIC = True
             KNOWN_PATH_106 = "-r2.-d2.-f2.r1.r1.d0.r2.-d0.-r0.-f0.d0.r0.f1.-d0.f1.r2.r1.-d0.-r2.-f1.-f2.d1.r0.d0"
             OUTPUT_DIR = Path("/kaggle/working") if Path("/kaggle/working").exists() else Path(".")
@@ -337,6 +339,7 @@ BIDIRECTIONAL = notebook(
             """
             from dataclasses import asdict
             from ihes_dual.beam import BeamConfig, beam_search
+            from ihes_dual.bidirectional import blind_join_one_move
             from ihes_dual.puzzle import invert_path
             from ihes_dual.solve import (
                 bidirectional_scorers,
@@ -366,6 +369,18 @@ BIDIRECTIONAL = notebook(
                 known_original_path=known_path,
                 scoring_mode=SCORING_MODE,
             )
+            exact_intersection_found = blind.joined is not None
+            if blind.joined is None and ALLOW_ONE_MOVE_SHELL:
+                blind.joined = blind_join_one_move(
+                    puzzle,
+                    start,
+                    frame,
+                    blind.forward,
+                    blind.reverse,
+                    forward_depths=FORWARD_DEPTHS,
+                    reverse_depths=REVERSE_DEPTHS,
+                    parent_chunk=SHELL_PARENT_CHUNK,
+                )
             ordinary_reports = {
                 "forward": blind.forward.diagnostic_report(),
                 "reverse": blind.reverse.diagnostic_report(),
@@ -374,7 +389,10 @@ BIDIRECTIONAL = notebook(
                 print(direction, "ordinary first natural drop:", report["first_natural_drop"])
                 for row in report["depths"]:
                     print(direction, "ordinary", row)
-            print("blind exact meeting found:", blind.joined is not None)
+            print("blind exact intersection found:", exact_intersection_found)
+            print("blind exact-or-one-move join found:", blind.joined is not None)
+            if blind.joined is not None:
+                print("blind join kind:", blind.joined.meeting.join_kind)
             """
         ),
         code(
@@ -438,6 +456,13 @@ BIDIRECTIONAL = notebook(
                 "mapping_applied_before_hashing": True,
                 "blind_intersector_used_known_midpoint_or_hash": False,
                 "protected_frontiers_used_for_blind_join": False,
+                "exact_intersection_found": exact_intersection_found,
+                "one_move_shell_enabled": ALLOW_ONE_MOVE_SHELL,
+                "one_move_shell_parent_chunk": SHELL_PARENT_CHUNK,
+                "shell_children_are_retained_top_k": False,
+                "join_kind": (
+                    None if blind.joined is None else blind.joined.meeting.join_kind
+                ),
                 "meeting": None if blind.joined is None else asdict(blind.joined.meeting),
                 "solution": (
                     None if blind.joined is None
@@ -457,7 +482,7 @@ BIDIRECTIONAL = notebook(
             }
             write_run_log(run_dir / "run.json", run_payload)
             if blind.joined is None:
-                raise RuntimeError("blind complete-frontier intersection found no exact meeting")
+                raise RuntimeError("blind exact and one-move complete-frontier joins found no meeting")
             if not run_payload["replay_valid"]:
                 raise AssertionError("blind joined path failed original-coordinate replay")
             print("blind meeting:", blind.joined.meeting)

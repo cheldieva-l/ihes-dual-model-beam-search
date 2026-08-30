@@ -71,6 +71,14 @@ M_s(r)[q] = s[r[q]]
 
 The implementation applies `M_s` to every row of the complete reverse frontier before hashing and intersection. A candidate meeting must satisfy exact 72-entry equality. No known midpoint or midpoint hash is supplied to the blind join.
 
+The exact complete-frontier intersection is always attempted first. Experiments
+where it is empty are reported as such. The optional blind one-move extension then
+scans every child produced by all 18 generators from one complete retained frontier
+against the opposite complete retained frontier, in both directions. It accepts no
+target state or hash and verifies every hash candidate by exact state equality.
+These shell children are generated candidates and are never described as retained
+top-K states. A shell meeting adds the generated bridge move during reconstruction.
+
 If the forward path to the meeting is `A` and the reverse path is `B`, the full frame solution is:
 
 ```text
