@@ -283,7 +283,7 @@ BIDIRECTIONAL = notebook(
             """
             # IHES Cube — Bidirectional Symmetry + Reverse Beam Search
 
-            This notebook builds independent direct and reverse beams. The forward beam uses the controlled model's primary score, while the reverse beam uses the direction-aware `direct score - reverse score` paired-projection objective. It first maps every reverse-frontier row into the direct projection and performs the required blind exact full-frontier intersection without a supplied midpoint or midpoint hash. If that exact set intersection is empty, an explicitly labelled blind extension scans every one-move child shell against the opposite complete frontier. Shell children are generated candidates, not claimed top-K states. The known cube-106 path is used only to audit true top-K retention and the optional, separate last-slot protection mode. Protected frontiers are never used for either blind join.
+            This notebook builds independent direct and reverse beams. Both directions use the controlled model's primary score: the preceding public symmetry/reverse run proved that this ranking independently reaches a replay-valid solution from each side, whereas the direction-aware contrast experiment did not produce a blind join. It first maps every reverse-frontier row into the direct projection and performs the required blind exact full-frontier intersection without a supplied midpoint or midpoint hash. If that exact set intersection is empty, an explicitly labelled blind extension scans every one-move child shell against the opposite complete frontier. Shell children are generated candidates, not claimed top-K states. The known cube-106 path is used only to audit true top-K retention and the optional, separate last-slot protection mode. Protected frontiers are never used for either blind join.
             """
         ),
         code(
@@ -298,7 +298,7 @@ BIDIRECTIONAL = notebook(
             PARENT_CHUNK = 250_000
             INFERENCE_BATCH = 8_192
             DEVICE = "cuda"
-            SCORING_MODE = "forward-primary_reverse-direct-minus-reverse"
+            SCORING_MODE = "primary-only"
             ALLOW_ONE_MOVE_SHELL = True
             SHELL_PARENT_CHUNK = 10_000
             RUN_PROTECTED_DIAGNOSTIC = True

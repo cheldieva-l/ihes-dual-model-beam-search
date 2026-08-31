@@ -21,9 +21,11 @@ The checkpoint-compatible network one-hot encodes all 72 state entries, uses two
 
 Two deterministic 64-bit Zobrist hashes index states. Hash equality is never treated as state equality in correctness-sensitive operations: collision groups and frontier meetings are verified by exact comparison of all 72 entries.
 
-The first two notebooks rank by the primary MLP score. The bidirectional notebook
-uses the paired-projection contrast objective adapted from the source dual-model
-method. For a direct-frame state `d`, the inverse projection is:
+The first two notebooks rank by the primary MLP score. The bidirectional
+implementation supports both that ranking and the paired-projection contrast
+objective adapted from the source dual-model method. Public versions 2 through 4
+used a contrast variant; version 5 is the documented primary-only control. For a
+direct-frame state `d`, the inverse projection is:
 
 ```text
 N_s(d)[q] = inverse(s)[d[q]]
@@ -31,13 +33,16 @@ N_s(d)[q] = inverse(s)[d[q]]
 
 The source direction-aware contrast is `direct score - reverse score`. It therefore
 has different call order in the two searches: `h(d) - h(N_s(d))` for a direct
-candidate and `h(M_s(r)) - h(r)` for a reverse candidate. The controlled cube-106
-run uses the already validated primary MLP ranking in the forward beam and the
-direction-aware contrast in the reverse beam. This explicit hybrid preserves the
-forward behavior that produced the replay-verified 24-move base solution while
-giving the reverse search the paired orientation from the source method. The same
-canonical checkpoint `1778521793` performs every evaluation; this does not claim
-that two distinct weight files were used.
+candidate and `h(M_s(r)) - h(r)` for a reverse candidate. Public bidirectional
+versions 3 and 4 used the already validated primary MLP ranking in the forward
+beam and the direction-aware contrast in the reverse beam. That hybrid produced
+neither an exact meeting nor a complete one-move-shell meeting. Version 5 is a
+controlled primary-only ablation in both directions, motivated by the independent
+public direct and reverse searches that reached replay-valid solutions of lengths
+24 and 26 with the same primary ranking. The paired-projection algebra remains
+implemented and tested, while the v5 blind join still maps the complete reverse
+frontier before hashing. The same canonical checkpoint `1778521793` performs every
+evaluation; this does not claim that two distinct weight files were used.
 
 ## 3. Symmetry frame
 
