@@ -57,7 +57,7 @@ python -m pytest tests/test_real_assets.py
 
 1. [IHES Base MLP Beam Search 1M](https://www.kaggle.com/code/arabidopsisthalian/ihes-base-mlp-beam-search-1m) — public version 1 completed on GPU T4 x2.
 2. [IHES Symmetry Reverse Beam Search](https://www.kaggle.com/code/arabidopsisthalian/ihes-symmetry-reverse-beam-search) — public version 1 completed on GPU T4 x2.
-3. [IHES Bidirectional Symmetry Reverse](https://www.kaggle.com/code/arabidopsisthalian/ihes-bidirectional-symmetry-reverse) — public versions 1 through 3 ended without a blind exact meeting. Version 4 adds an explicitly labelled blind one-move shell join after the required exact intersection; its launch is waiting for a Kaggle batch-GPU slot.
+3. [IHES Bidirectional Symmetry Reverse](https://www.kaggle.com/code/arabidopsisthalian/ihes-bidirectional-symmetry-reverse) — public versions 1 through 3 ended without a blind exact meeting. Version 4 adds an explicitly labelled blind one-move shell join after the required exact intersection and is running on Kaggle GPU T4 x2; results remain pending until the remote run completes and its outputs are audited.
 
 See [REPRODUCE.md](REPRODUCE.md) for required inputs and validation steps.
 
