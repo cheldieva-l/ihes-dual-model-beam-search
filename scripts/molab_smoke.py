@@ -14,9 +14,12 @@ import base64
 import gzip
 import json
 from pathlib import Path
+import shutil
+import tempfile
 import time
+import urllib.request
+import zipfile
 
-import kagglehub
 import numpy as np
 import torch
 
@@ -78,6 +81,35 @@ def load_puzzle() -> IHESPuzzle:
     return puzzle
 
 
+def download_model_root() -> Path:
+    """Return the public checkpoint directory without requiring Molab secrets.
+
+    If Molab already has ``kagglehub`` it is reused.  Otherwise the same public
+    Kaggle dataset is downloaded with the Python standard library into a
+    persistent temporary cache.
+    """
+
+    try:
+        import kagglehub
+
+        return Path(kagglehub.dataset_download(MODEL_DATASET))
+    except ModuleNotFoundError:
+        cache = Path(tempfile.gettempdir()) / "ihes-model-1778521793"
+        complete = cache / ".download_complete"
+        if complete.exists():
+            return cache
+        cache.mkdir(parents=True, exist_ok=True)
+        archive = cache / "dataset.zip.partial"
+        url = f"https://www.kaggle.com/api/v1/datasets/download/{MODEL_DATASET}"
+        with urllib.request.urlopen(url, timeout=120) as response, archive.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        with zipfile.ZipFile(archive) as bundle:
+            bundle.extractall(cache)
+        archive.unlink(missing_ok=True)
+        complete.write_text("ok\n", encoding="utf-8")
+        return cache
+
+
 def run_smoke() -> dict[str, object]:
     """Run one small GPU beam and return a self-contained result record."""
 
@@ -101,7 +133,7 @@ def run_smoke() -> dict[str, object]:
             result["status"] = "no_cuda"
             return result
 
-        model_root = Path(kagglehub.dataset_download(MODEL_DATASET))
+        model_root = download_model_root()
         model_spec = resolve_model(model_root, MODEL_ID)
         model = load_mlp2rb(model_spec, "cuda")
         config = BeamConfig(
@@ -165,4 +197,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
