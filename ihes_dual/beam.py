@@ -33,10 +33,20 @@ class DepthDiagnostic:
     depth: int
     frontier_size: int
     generated_count: int
+    frontier_score_min: float | None = None
+    frontier_score_p01: float | None = None
+    frontier_score_p10: float | None = None
+    frontier_score_p50: float | None = None
+    frontier_score_p90: float | None = None
+    frontier_score_cutoff: float | None = None
     known_state_generated: bool | None = None
     known_state_natural_top_k: bool | None = None
     known_state_protected: bool = False
     known_state_score: float | None = None
+    known_state_frontier_rank: int | None = None
+    known_state_raw_rank_min: int | None = None
+    known_state_raw_rank_max: int | None = None
+    known_state_raw_percentile: float | None = None
 
 
 @dataclass
@@ -288,6 +298,13 @@ def beam_search(
         found_goal: tuple[float, int, int] | None = None
         known_candidate: tuple[float, int, int, np.ndarray] | None = None
         known_target = known_states[depth] if known_states is not None and depth < len(known_states) else None
+        known_target_score = (
+            None
+            if known_target is None
+            else float(_score_numpy(known_target[None, :], scorer, config)[0])
+        )
+        known_raw_better = 0
+        known_raw_equal = 0
 
         for parent_offset in range(0, len(current_states), config.parent_chunk):
             parent_end = min(parent_offset + config.parent_chunk, len(current_states))
@@ -306,6 +323,9 @@ def beam_search(
                 child_parents = child_parents[allowed]
             generated_count += len(child_states)
             child_scores = _score_numpy(child_states, scorer, config)
+            if known_target_score is not None:
+                known_raw_better += int(np.count_nonzero(child_scores < known_target_score))
+                known_raw_equal += int(np.count_nonzero(child_scores == known_target_score))
             for candidate in _find_exact_rows(child_states, goal_array):
                 record = (float(child_scores[candidate]), int(child_parents[candidate]), int(child_moves[candidate]))
                 if found_goal is None or record[0] < found_goal[0]:
@@ -348,8 +368,12 @@ def beam_search(
 
         natural = None
         protected = False
+        known_frontier_rank = None
         if known_target is not None:
-            natural = len(_find_exact_rows(reservoir_states, known_target)) > 0
+            known_frontier_rows = _find_exact_rows(reservoir_states, known_target)
+            natural = len(known_frontier_rows) > 0
+            if natural:
+                known_frontier_rank = int(known_frontier_rows[0]) + 1
             if known_candidate is not None and not natural and trace.first_natural_drop is None:
                 trace.first_natural_drop = depth
             if config.diagnostic_protect and known_candidate is not None and not natural:
@@ -376,15 +400,42 @@ def beam_search(
             trace.frontiers[depth] = StoredFrontier(
                 current_states.copy(), current_scores.copy(), current_last_moves.copy()
             )
+        score_quantiles = (
+            [None] * 5
+            if len(current_scores) == 0
+            else [float(value) for value in np.quantile(current_scores, [0.0, 0.01, 0.1, 0.5, 0.9])]
+        )
         trace.diagnostics.append(
             DepthDiagnostic(
                 depth=depth,
                 frontier_size=len(current_states),
                 generated_count=generated_count,
+                frontier_score_min=score_quantiles[0],
+                frontier_score_p01=score_quantiles[1],
+                frontier_score_p10=score_quantiles[2],
+                frontier_score_p50=score_quantiles[3],
+                frontier_score_p90=score_quantiles[4],
+                frontier_score_cutoff=None if len(current_scores) == 0 else float(np.max(current_scores)),
                 known_state_generated=None if known_target is None else known_candidate is not None,
                 known_state_natural_top_k=natural,
                 known_state_protected=protected,
-                known_state_score=None if known_candidate is None else known_candidate[0],
+                known_state_score=known_target_score,
+                known_state_frontier_rank=known_frontier_rank,
+                known_state_raw_rank_min=(
+                    None if known_target is None else known_raw_better + 1
+                ),
+                known_state_raw_rank_max=(
+                    None
+                    if known_target is None
+                    else known_raw_better
+                    + known_raw_equal
+                    + (0 if known_candidate is not None else 1)
+                ),
+                known_state_raw_percentile=(
+                    None
+                    if known_target is None or generated_count == 0
+                    else round(known_raw_better / generated_count, 9)
+                ),
             )
         )
         if trace.solution is not None:
