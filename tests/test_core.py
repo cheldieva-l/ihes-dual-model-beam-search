@@ -13,6 +13,7 @@ from ihes_dual.beam import (
     Zobrist128,
     _keep_root_stratified,
     _keep_top_k,
+    _one_step_backup_scores,
     beam_search,
 )
 from ihes_dual.bidirectional import blind_join, blind_join_one_move, known_path_mapping_report
@@ -280,6 +281,36 @@ def test_root_stratified_keeps_equal_first_move_quotas() -> None:
     )
     assert kept[4].tolist() == [0, 0, 1, 1]
     assert kept[1].tolist() == [0.0, 1.0, 100.0, 101.0]
+
+
+def test_one_step_backup_uses_best_allowed_child() -> None:
+    puzzle = tiny_puzzle()
+    states = np.asarray([[2, 1, 0]], dtype=np.uint8)
+
+    def exact_distance(batch: torch.Tensor) -> torch.Tensor:
+        target = torch.arange(3, device=batch.device)
+        return (batch != target).sum(dim=1).float()
+
+    config = BeamConfig(
+        beam_width=4,
+        max_depth=2,
+        parent_chunk=4,
+        inference_batch=8,
+        device="cpu",
+        autocast=False,
+        prune_immediate_inverse=False,
+    )
+    backup, evaluated = _one_step_backup_scores(
+        puzzle,
+        states,
+        np.asarray([-1], dtype=np.int16),
+        exact_distance,
+        config,
+    )
+    children = states[:, puzzle.moves].reshape(-1, puzzle.state_size)
+    expected = 1.0 + float(exact_distance(torch.from_numpy(children)).min())
+    assert evaluated == puzzle.generator_count
+    assert backup.tolist() == [expected]
 
 
 def test_split_checkpoint_materialization(tmp_path: Path) -> None:

@@ -21,12 +21,18 @@ class BeamConfig:
     prune_immediate_inverse: bool = False
     diagnostic_protect: bool = False
     root_stratified: bool = False
+    lookahead_pool_multiplier: int = 1
+    lookahead_blend: float = 1.0
     hash_seed: int = 0x1A2B3C4D
 
     def __post_init__(self) -> None:
         for name in ("beam_width", "max_depth", "parent_chunk", "inference_batch"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+        if self.lookahead_pool_multiplier <= 0:
+            raise ValueError("lookahead_pool_multiplier must be positive")
+        if not 0.0 <= self.lookahead_blend <= 1.0:
+            raise ValueError("lookahead_blend must be between 0 and 1")
 
 
 @dataclass
@@ -54,6 +60,11 @@ class DepthDiagnostic:
     known_state_root_raw_rank_min: int | None = None
     known_state_root_raw_rank_max: int | None = None
     known_state_root_frontier_rank: int | None = None
+    lookahead_evaluated_count: int = 0
+    selection_score_cutoff: float | None = None
+    known_state_in_lookahead_pool: bool | None = None
+    known_state_lookahead_score: float | None = None
+    known_state_lookahead_rank: int | None = None
 
 
 @dataclass
@@ -282,6 +293,37 @@ def _score_numpy(
     return np.concatenate(parts) if parts else np.empty(0, dtype=np.float32)
 
 
+def _one_step_backup_scores(
+    puzzle: IHESPuzzle,
+    states: np.ndarray,
+    last_moves: np.ndarray,
+    scorer: Callable[[torch.Tensor], torch.Tensor],
+    config: BeamConfig,
+) -> tuple[np.ndarray, int]:
+    """Return `1 + min_a h(a(state))` and the number of model evaluations."""
+
+    backup = np.full(len(states), np.inf, dtype=np.float32)
+    evaluated = 0
+    for offset in range(0, len(states), config.parent_chunk):
+        end = min(offset + config.parent_chunk, len(states))
+        parents = states[offset:end]
+        count = len(parents)
+        children = parents[:, puzzle.moves].reshape(-1, puzzle.state_size)
+        moves = np.tile(np.arange(puzzle.generator_count, dtype=np.int16), count)
+        child_parents = np.repeat(np.arange(count, dtype=np.int32), puzzle.generator_count)
+        if config.prune_immediate_inverse:
+            previous = np.repeat(last_moves[offset:end], puzzle.generator_count)
+            allowed = (previous < 0) | (moves != puzzle.inverse_move[np.maximum(previous, 0)])
+            children = children[allowed]
+            child_parents = child_parents[allowed]
+        scores = _score_numpy(children, scorer, config)
+        local = np.full(count, np.inf, dtype=np.float32)
+        np.minimum.at(local, child_parents, scores)
+        backup[offset:end] = 1.0 + local
+        evaluated += len(children)
+    return backup, evaluated
+
+
 def _candidate_path(
     parent_index: int,
     move_index: int,
@@ -370,6 +412,16 @@ def beam_search(
         known_root_raw_better = 0
         known_root_raw_equal = 0
         known_root_candidate_found = False
+        lookahead_evaluated_count = 0
+        selection_score_cutoff = None
+        known_in_lookahead_pool = None
+        known_lookahead_score = None
+        known_lookahead_rank = None
+        pool_width = (
+            config.beam_width
+            if config.root_stratified
+            else config.beam_width * config.lookahead_pool_multiplier
+        )
 
         for parent_offset in range(0, len(current_states), config.parent_chunk):
             parent_end = min(parent_offset + config.parent_chunk, len(current_states))
@@ -457,9 +509,55 @@ def beam_search(
                     combined_scores,
                     combined_parents,
                     combined_moves,
-                    config.beam_width,
+                    pool_width,
                     hasher,
                 )
+
+        if (
+            not config.root_stratified
+            and config.lookahead_pool_multiplier > 1
+            and len(reservoir_states) > config.beam_width
+            and found_goal is None
+        ):
+            known_pool_rows = (
+                np.empty(0, dtype=np.int64)
+                if known_target is None
+                else _find_exact_rows(reservoir_states, known_target)
+            )
+            known_in_lookahead_pool = None if known_target is None else len(known_pool_rows) > 0
+            backup_scores, lookahead_evaluated_count = _one_step_backup_scores(
+                puzzle,
+                reservoir_states,
+                reservoir_moves,
+                scorer,
+                config,
+            )
+            selection_scores = (
+                config.lookahead_blend * reservoir_scores
+                + (1.0 - config.lookahead_blend) * backup_scores
+            )
+            if len(known_pool_rows):
+                known_lookahead_score = float(np.min(selection_scores[known_pool_rows]))
+                known_lookahead_rank = int(
+                    np.count_nonzero(selection_scores < known_lookahead_score) + 1
+                )
+            (
+                reservoir_states,
+                kept_selection_scores,
+                reservoir_parents,
+                reservoir_moves,
+            ) = _keep_top_k(
+                reservoir_states,
+                selection_scores,
+                reservoir_parents,
+                reservoir_moves,
+                config.beam_width,
+                hasher,
+            )
+            selection_score_cutoff = (
+                None if len(kept_selection_scores) == 0 else float(np.max(kept_selection_scores))
+            )
+            reservoir_scores = _score_numpy(reservoir_states, scorer, config)
 
         if found_goal is not None:
             _, parent_index, move_index = found_goal
@@ -540,9 +638,12 @@ def beam_search(
                 known_state_raw_rank_max=(
                     None
                     if known_target is None
-                    else known_raw_better
-                    + known_raw_equal
-                    + (0 if known_candidate is not None else 1)
+                    else max(
+                        known_raw_better + 1,
+                        known_raw_better
+                        + known_raw_equal
+                        + (0 if known_candidate is not None else 1),
+                    )
                 ),
                 known_state_raw_percentile=(
                     None
@@ -564,11 +665,19 @@ def beam_search(
                 known_state_root_raw_rank_max=(
                     None
                     if known_root is None
-                    else known_root_raw_better
-                    + known_root_raw_equal
-                    + (0 if known_root_candidate_found else 1)
+                    else max(
+                        known_root_raw_better + 1,
+                        known_root_raw_better
+                        + known_root_raw_equal
+                        + (0 if known_root_candidate_found else 1),
+                    )
                 ),
                 known_state_root_frontier_rank=known_root_frontier_rank,
+                lookahead_evaluated_count=lookahead_evaluated_count,
+                selection_score_cutoff=selection_score_cutoff,
+                known_state_in_lookahead_pool=known_in_lookahead_pool,
+                known_state_lookahead_score=known_lookahead_score,
+                known_state_lookahead_rank=known_lookahead_rank,
             )
         )
         if trace.solution is not None:
