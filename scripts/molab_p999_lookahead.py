@@ -35,6 +35,7 @@ def run_lookahead() -> dict[str, object]:
     power = int(os.environ.get("P999_LOOKAHEAD_BEAM_POWER", "14"))
     pool_multiplier = int(os.environ.get("P999_LOOKAHEAD_POOL_MULTIPLIER", "8"))
     blend = float(os.environ.get("P999_LOOKAHEAD_BLEND", "0"))
+    start_depth = int(os.environ.get("P999_LOOKAHEAD_START_DEPTH", "5"))
     puzzle = load_puzzle()
     entry = p999_entry()
     start = np.asarray(entry["start"], dtype=np.uint8)
@@ -47,6 +48,7 @@ def run_lookahead() -> dict[str, object]:
         "beam_width": 2**power,
         "pool_multiplier": pool_multiplier,
         "lookahead_blend_current_h": blend,
+        "lookahead_start_depth": start_depth,
         "incumbent_length": len(incumbent),
         "incumbent_valid": bool(puzzle.verify_solution(start, incumbent)),
         "gpu_available": torch.cuda.is_available(),
@@ -74,6 +76,7 @@ def run_lookahead() -> dict[str, object]:
                 diagnostic_protect=False,
                 lookahead_pool_multiplier=pool_multiplier,
                 lookahead_blend=blend,
+                lookahead_start_depth=start_depth,
             ),
             diagnostic_path=incumbent,
         )

@@ -23,6 +23,7 @@ class BeamConfig:
     root_stratified: bool = False
     lookahead_pool_multiplier: int = 1
     lookahead_blend: float = 1.0
+    lookahead_start_depth: int = 1
     hash_seed: int = 0x1A2B3C4D
 
     def __post_init__(self) -> None:
@@ -31,6 +32,8 @@ class BeamConfig:
                 raise ValueError(f"{name} must be positive")
         if self.lookahead_pool_multiplier <= 0:
             raise ValueError("lookahead_pool_multiplier must be positive")
+        if self.lookahead_start_depth <= 0:
+            raise ValueError("lookahead_start_depth must be positive")
         if not 0.0 <= self.lookahead_blend <= 1.0:
             raise ValueError("lookahead_blend must be between 0 and 1")
 
@@ -419,7 +422,7 @@ def beam_search(
         known_lookahead_rank = None
         pool_width = (
             config.beam_width
-            if config.root_stratified
+            if config.root_stratified or depth < config.lookahead_start_depth
             else config.beam_width * config.lookahead_pool_multiplier
         )
 
@@ -516,6 +519,7 @@ def beam_search(
         if (
             not config.root_stratified
             and config.lookahead_pool_multiplier > 1
+            and depth >= config.lookahead_start_depth
             and len(reservoir_states) > config.beam_width
             and found_goal is None
         ):
