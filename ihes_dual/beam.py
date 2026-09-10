@@ -20,6 +20,7 @@ class BeamConfig:
     smaller_is_better: bool = True
     prune_immediate_inverse: bool = False
     diagnostic_protect: bool = False
+    root_stratified: bool = False
     hash_seed: int = 0x1A2B3C4D
 
     def __post_init__(self) -> None:
@@ -47,6 +48,12 @@ class DepthDiagnostic:
     known_state_raw_rank_min: int | None = None
     known_state_raw_rank_max: int | None = None
     known_state_raw_percentile: float | None = None
+    known_state_root: int | None = None
+    known_state_root_quota: int | None = None
+    known_state_root_generated_count: int | None = None
+    known_state_root_raw_rank_min: int | None = None
+    known_state_root_raw_rank_max: int | None = None
+    known_state_root_frontier_rank: int | None = None
 
 
 @dataclass
@@ -200,6 +207,48 @@ def _keep_top_k(
     return states[keep], scores[keep], parents[keep], moves[keep]
 
 
+def _root_quotas(beam_width: int, root_count: int) -> np.ndarray:
+    """Split the total beam as evenly as possible across first-move roots."""
+
+    quotas = np.full(root_count, beam_width // root_count, dtype=np.int64)
+    quotas[: beam_width % root_count] += 1
+    return quotas
+
+
+def _keep_root_stratified(
+    states: np.ndarray,
+    scores: np.ndarray,
+    parents: np.ndarray,
+    moves: np.ndarray,
+    roots: np.ndarray,
+    beam_width: int,
+    root_count: int,
+    hasher: Zobrist128,
+) -> tuple[np.ndarray, ...]:
+    """Keep an equal exact-state-deduplicated quota for every first move.
+
+    Inputs are generated candidates plus their first-move root.  Outputs keep
+    the same five arrays aligned.  States are deduplicated within each root;
+    retaining the same state through different roots is intentional diversity.
+    """
+
+    if len(states) == 0:
+        return states, scores, parents, moves, roots
+    kept_parts: list[tuple[np.ndarray, ...]] = []
+    for root, quota in enumerate(_root_quotas(beam_width, root_count)):
+        rows = np.flatnonzero(roots == root)
+        if len(rows) == 0 or quota == 0:
+            continue
+        kept = _keep_top_k(
+            states[rows], scores[rows], parents[rows], moves[rows], int(quota), hasher
+        )
+        kept_parts.append((*kept, np.full(len(kept[0]), root, dtype=np.int16)))
+    if not kept_parts:
+        empty = np.empty(0, dtype=np.int16)
+        return states[:0], scores[:0], parents[:0], moves[:0], empty
+    return tuple(np.concatenate([part[column] for part in kept_parts]) for column in range(5))
+
+
 def _find_exact_rows(states: np.ndarray, target: np.ndarray) -> np.ndarray:
     """Find exact rows without allocating an N x state_size Boolean array."""
 
@@ -274,6 +323,7 @@ def beam_search(
     current_states = start_array[None, :]
     current_scores = np.asarray([0.0], dtype=np.float32)
     current_last_moves = np.asarray([-1], dtype=np.int16)
+    current_roots = np.asarray([-1], dtype=np.int16)
     if 0 in retain:
         trace.frontiers[0] = StoredFrontier(current_states.copy(), current_scores.copy(), current_last_moves.copy())
     if np.array_equal(start_array, goal_array):
@@ -294,6 +344,7 @@ def beam_search(
         reservoir_scores = np.empty(0, dtype=np.float32)
         reservoir_parents = np.empty(0, dtype=np.int32)
         reservoir_moves = np.empty(0, dtype=np.int16)
+        reservoir_roots = np.empty(0, dtype=np.int16)
         generated_count = 0
         found_goal: tuple[float, int, int] | None = None
         known_candidate: tuple[float, int, int, np.ndarray] | None = None
@@ -305,6 +356,20 @@ def beam_search(
         )
         known_raw_better = 0
         known_raw_equal = 0
+        known_root = (
+            None
+            if (
+                not config.root_stratified
+                or known_target is None
+                or diagnostic_path is None
+                or len(diagnostic_path) == 0
+            )
+            else int(diagnostic_path[0])
+        )
+        known_root_generated_count = 0
+        known_root_raw_better = 0
+        known_root_raw_equal = 0
+        known_root_candidate_found = False
 
         for parent_offset in range(0, len(current_states), config.parent_chunk):
             parent_end = min(parent_offset + config.parent_chunk, len(current_states))
@@ -315,17 +380,32 @@ def beam_search(
             child_parents = np.repeat(
                 np.arange(parent_offset, parent_end, dtype=np.int32), puzzle.generator_count
             )
+            child_roots = None
+            if config.root_stratified:
+                child_roots = (
+                    child_moves.copy()
+                    if depth == 1
+                    else np.repeat(current_roots[parent_offset:parent_end], puzzle.generator_count)
+                )
             if config.prune_immediate_inverse:
                 previous = np.repeat(current_last_moves[parent_offset:parent_end], puzzle.generator_count)
                 allowed = (previous < 0) | (child_moves != puzzle.inverse_move[np.maximum(previous, 0)])
                 child_states = child_states[allowed]
                 child_moves = child_moves[allowed]
                 child_parents = child_parents[allowed]
+                if child_roots is not None:
+                    child_roots = child_roots[allowed]
             generated_count += len(child_states)
             child_scores = _score_numpy(child_states, scorer, config)
             if known_target_score is not None:
                 known_raw_better += int(np.count_nonzero(child_scores < known_target_score))
                 known_raw_equal += int(np.count_nonzero(child_scores == known_target_score))
+                if known_root is not None:
+                    in_root = child_roots == known_root
+                    root_scores = child_scores[in_root]
+                    known_root_generated_count += len(root_scores)
+                    known_root_raw_better += int(np.count_nonzero(root_scores < known_target_score))
+                    known_root_raw_equal += int(np.count_nonzero(root_scores == known_target_score))
             for candidate in _find_exact_rows(child_states, goal_array):
                 record = (float(child_scores[candidate]), int(child_parents[candidate]), int(child_moves[candidate]))
                 if found_goal is None or record[0] < found_goal[0]:
@@ -333,6 +413,8 @@ def beam_search(
 
             if known_target is not None:
                 for candidate in _find_exact_rows(child_states, known_target):
+                    if known_root is not None and child_roots[candidate] == known_root:
+                        known_root_candidate_found = True
                     record = (
                         float(child_scores[candidate]),
                         int(child_parents[candidate]),
@@ -346,19 +428,38 @@ def beam_search(
             combined_scores = np.concatenate((reservoir_scores, child_scores))
             combined_parents = np.concatenate((reservoir_parents, child_parents))
             combined_moves = np.concatenate((reservoir_moves, child_moves))
-            (
-                reservoir_states,
-                reservoir_scores,
-                reservoir_parents,
-                reservoir_moves,
-            ) = _keep_top_k(
-                combined_states,
-                combined_scores,
-                combined_parents,
-                combined_moves,
-                config.beam_width,
-                hasher,
-            )
+            if config.root_stratified:
+                combined_roots = np.concatenate((reservoir_roots, child_roots))
+                (
+                    reservoir_states,
+                    reservoir_scores,
+                    reservoir_parents,
+                    reservoir_moves,
+                    reservoir_roots,
+                ) = _keep_root_stratified(
+                    combined_states,
+                    combined_scores,
+                    combined_parents,
+                    combined_moves,
+                    combined_roots,
+                    config.beam_width,
+                    puzzle.generator_count,
+                    hasher,
+                )
+            else:
+                (
+                    reservoir_states,
+                    reservoir_scores,
+                    reservoir_parents,
+                    reservoir_moves,
+                ) = _keep_top_k(
+                    combined_states,
+                    combined_scores,
+                    combined_parents,
+                    combined_moves,
+                    config.beam_width,
+                    hasher,
+                )
 
         if found_goal is not None:
             _, parent_index, move_index = found_goal
@@ -369,11 +470,17 @@ def beam_search(
         natural = None
         protected = False
         known_frontier_rank = None
+        known_root_frontier_rank = None
         if known_target is not None:
             known_frontier_rows = _find_exact_rows(reservoir_states, known_target)
             natural = len(known_frontier_rows) > 0
             if natural:
                 known_frontier_rank = int(known_frontier_rows[0]) + 1
+                if config.root_stratified and known_root is not None:
+                    root_rows = np.flatnonzero(reservoir_roots == known_root)
+                    matches = _find_exact_rows(reservoir_states[root_rows], known_target)
+                    if len(matches):
+                        known_root_frontier_rank = int(matches[0]) + 1
             if known_candidate is not None and not natural and trace.first_natural_drop is None:
                 trace.first_natural_drop = depth
             if config.diagnostic_protect and known_candidate is not None and not natural:
@@ -390,12 +497,18 @@ def beam_search(
                     reservoir_parents[last] = parent
                     reservoir_moves[last] = move
                 protected = True
+                if config.root_stratified:
+                    if len(reservoir_roots) < len(reservoir_states):
+                        reservoir_roots = np.append(reservoir_roots, np.int16(known_root))
+                    else:
+                        reservoir_roots[-1] = np.int16(known_root)
 
         trace.parent_history.append(reservoir_parents.copy())
         trace.move_history.append(reservoir_moves.copy())
         current_states = reservoir_states
         current_scores = reservoir_scores
         current_last_moves = reservoir_moves
+        current_roots = reservoir_roots
         if depth in retain:
             trace.frontiers[depth] = StoredFrontier(
                 current_states.copy(), current_scores.copy(), current_last_moves.copy()
@@ -436,6 +549,26 @@ def beam_search(
                     if known_target is None or generated_count == 0
                     else round(known_raw_better / generated_count, 9)
                 ),
+                known_state_root=known_root,
+                known_state_root_quota=(
+                    None
+                    if known_root is None or not config.root_stratified
+                    else int(_root_quotas(config.beam_width, puzzle.generator_count)[known_root])
+                ),
+                known_state_root_generated_count=(
+                    None if known_root is None else known_root_generated_count
+                ),
+                known_state_root_raw_rank_min=(
+                    None if known_root is None else known_root_raw_better + 1
+                ),
+                known_state_root_raw_rank_max=(
+                    None
+                    if known_root is None
+                    else known_root_raw_better
+                    + known_root_raw_equal
+                    + (0 if known_root_candidate_found else 1)
+                ),
+                known_state_root_frontier_rank=known_root_frontier_rank,
             )
         )
         if trace.solution is not None:

@@ -6,7 +6,15 @@ import numpy as np
 import torch
 
 from ihes_dual.assets import find_competition_assets
-from ihes_dual.beam import BeamConfig, BeamTrace, StoredFrontier, _keep_top_k, beam_search
+from ihes_dual.beam import (
+    BeamConfig,
+    BeamTrace,
+    StoredFrontier,
+    Zobrist128,
+    _keep_root_stratified,
+    _keep_top_k,
+    beam_search,
+)
 from ihes_dual.bidirectional import blind_join, blind_join_one_move, known_path_mapping_report
 from ihes_dual.model import PairedContrastScorer
 from ihes_dual.puzzle import IHESPuzzle, invert_path
@@ -252,6 +260,26 @@ def test_top_k_is_exact_even_under_hash_collision() -> None:
     assert kept_scores.tolist() == [1.0, 2.0, 3.0]
     assert kept_parents.tolist() == [2, 1, 3]
     assert len({row.tobytes() for row in kept_states}) == 3
+
+
+def test_root_stratified_keeps_equal_first_move_quotas() -> None:
+    states = np.asarray([[index, 9] for index in range(8)], dtype=np.uint8)
+    scores = np.asarray([0, 1, 2, 3, 100, 101, 102, 103], dtype=np.float32)
+    parents = np.arange(8, dtype=np.int32)
+    moves = np.arange(8, dtype=np.int16)
+    roots = np.asarray([0, 0, 0, 0, 1, 1, 1, 1], dtype=np.int16)
+    kept = _keep_root_stratified(
+        states,
+        scores,
+        parents,
+        moves,
+        roots,
+        beam_width=4,
+        root_count=2,
+        hasher=Zobrist128(2, 10, 123),
+    )
+    assert kept[4].tolist() == [0, 0, 1, 1]
+    assert kept[1].tolist() == [0.0, 1.0, 100.0, 101.0]
 
 
 def test_split_checkpoint_materialization(tmp_path: Path) -> None:
